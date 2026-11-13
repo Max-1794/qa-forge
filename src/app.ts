@@ -15,6 +15,14 @@ interface TestCase {
   expectedResult: string
 }
 
+interface TestExecution {
+  id: string
+  testCaseId: string
+  status: 'PASS' | 'FAIL' | 'BLOCKED'
+  notes?: string
+  executedAt: string
+}
+
 function isNonEmptyText(value: unknown): value is string {
   return typeof value === 'string' && value.trim() !== ''
 }
@@ -23,6 +31,7 @@ export function createApp() {
   const app = new Hono()
   const projects: Project[] = []
   const testCases: TestCase[] = []
+  const executions: TestExecution[] = []
 
   app.get('/', (c) => {
     return c.json({
@@ -109,6 +118,50 @@ export function createApp() {
     }
     testCases.push(testCase)
     return c.json({ testCase }, 201)
+  })
+
+  app.get('/api/test-cases/:testCaseId/executions', (c) => {
+    const testCaseId = c.req.param('testCaseId')
+    if (!testCases.some(testCase => testCase.id === testCaseId)) {
+      return c.json({ error: 'El caso de prueba no existe.' }, 404)
+    }
+    return c.json({ executions: executions.filter(execution => execution.testCaseId === testCaseId) }, 200)
+  })
+
+  app.post('/api/test-cases/:testCaseId/executions', async (c) => {
+    const testCaseId = c.req.param('testCaseId')
+    if (!testCases.some(testCase => testCase.id === testCaseId)) {
+      return c.json({ error: 'El caso de prueba no existe.' }, 404)
+    }
+
+    let body: unknown
+    try {
+      body = await c.req.json()
+    } catch {
+      return c.json({ error: 'El cuerpo debe contener JSON válido.' }, 400)
+    }
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+      return c.json({ error: 'El cuerpo debe ser un objeto JSON.' }, 400)
+    }
+    if (!('status' in body) ||
+        (body.status !== 'PASS' && body.status !== 'FAIL' && body.status !== 'BLOCKED')) {
+      return c.json({ error: 'El estado (status) debe ser PASS, FAIL o BLOCKED.' }, 400)
+    }
+    if ('notes' in body && typeof body.notes !== 'string') {
+      return c.json({ error: 'Las notas (notes) deben ser texto.' }, 400)
+    }
+
+    const execution: TestExecution = {
+      id: randomUUID(),
+      testCaseId,
+      status: body.status,
+      executedAt: new Date().toISOString()
+    }
+    if ('notes' in body && typeof body.notes === 'string') {
+      execution.notes = body.notes
+    }
+    executions.push(execution)
+    return c.json({ execution }, 201)
   })
 
   return app
