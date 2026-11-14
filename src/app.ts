@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 
 import { DatabaseSync } from 'node:sqlite'
 import { createStorage, type Project, type TestCase, type TestExecution } from './storage'
+import { registerWebRoutes } from './web/routes'
 
 function isNonEmptyText(value: unknown): value is string {
   return typeof value === 'string' && value.trim() !== ''
@@ -11,6 +12,7 @@ function isNonEmptyText(value: unknown): value is string {
 export function createApp(db: DatabaseSync) {
   const app = new Hono()
   const storage = createStorage(db)
+  registerWebRoutes(app)
 
   app.get('/', (c) => {
     return c.json({
