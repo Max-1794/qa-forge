@@ -1,37 +1,16 @@
 import { Hono } from 'hono'
 import { randomUUID } from 'node:crypto'
 
-interface Project {
-  id: string
-  name: string
-  description?: string
-}
-
-interface TestCase {
-  id: string
-  projectId: string
-  title: string
-  steps: string[]
-  expectedResult: string
-}
-
-interface TestExecution {
-  id: string
-  testCaseId: string
-  status: 'PASS' | 'FAIL' | 'BLOCKED'
-  notes?: string
-  executedAt: string
-}
+import { DatabaseSync } from 'node:sqlite'
+import { createStorage, type Project, type TestCase, type TestExecution } from './storage'
 
 function isNonEmptyText(value: unknown): value is string {
   return typeof value === 'string' && value.trim() !== ''
 }
 
-export function createApp() {
+export function createApp(db: DatabaseSync) {
   const app = new Hono()
-  const projects: Project[] = []
-  const testCases: TestCase[] = []
-  const executions: TestExecution[] = []
+  const storage = createStorage(db)
 
   app.get('/', (c) => {
     return c.json({
@@ -42,7 +21,7 @@ export function createApp() {
 
   app.get('/api/projects', (c) => {
     return c.json({
-      projects
+      projects: storage.listProjects()
     })
   })
 
@@ -70,21 +49,21 @@ export function createApp() {
     if ('description' in body && typeof body.description === 'string') {
       project.description = body.description
     }
-    projects.push(project)
+    storage.addProject(project)
     return c.json({ project }, 201)
   })
 
   app.get('/api/projects/:projectId/test-cases', (c) => {
     const projectId = c.req.param('projectId')
-    if (!projects.some(project => project.id === projectId)) {
+    if (!storage.hasProject(projectId)) {
       return c.json({ error: 'El proyecto no existe.' }, 404)
     }
-    return c.json({ testCases: testCases.filter(testCase => testCase.projectId === projectId) })
+    return c.json({ testCases: storage.listTestCases(projectId) })
   })
 
   app.post('/api/projects/:projectId/test-cases', async (c) => {
     const projectId = c.req.param('projectId')
-    if (!projects.some(project => project.id === projectId)) {
+    if (!storage.hasProject(projectId)) {
       return c.json({ error: 'El proyecto no existe.' }, 404)
     }
 
@@ -116,21 +95,21 @@ export function createApp() {
       steps: body.steps.map(step => step.trim()),
       expectedResult: body.expectedResult.trim()
     }
-    testCases.push(testCase)
+    storage.addTestCase(testCase)
     return c.json({ testCase }, 201)
   })
 
   app.get('/api/test-cases/:testCaseId/executions', (c) => {
     const testCaseId = c.req.param('testCaseId')
-    if (!testCases.some(testCase => testCase.id === testCaseId)) {
+    if (!storage.hasTestCase(testCaseId)) {
       return c.json({ error: 'El caso de prueba no existe.' }, 404)
     }
-    return c.json({ executions: executions.filter(execution => execution.testCaseId === testCaseId) }, 200)
+    return c.json({ executions: storage.listExecutions(testCaseId) }, 200)
   })
 
   app.post('/api/test-cases/:testCaseId/executions', async (c) => {
     const testCaseId = c.req.param('testCaseId')
-    if (!testCases.some(testCase => testCase.id === testCaseId)) {
+    if (!storage.hasTestCase(testCaseId)) {
       return c.json({ error: 'El caso de prueba no existe.' }, 404)
     }
 
@@ -160,11 +139,9 @@ export function createApp() {
     if ('notes' in body && typeof body.notes === 'string') {
       execution.notes = body.notes
     }
-    executions.push(execution)
+    storage.addExecution(execution)
     return c.json({ execution }, 201)
   })
 
   return app
 }
-
-export const app = createApp()

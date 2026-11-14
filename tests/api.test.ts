@@ -1,6 +1,68 @@
-import { test } from 'node:test'
+import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { createApp } from '../src/app'
+import { DatabaseSync } from 'node:sqlite'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+const databases: DatabaseSync[] = []
+
+function createTestApp() {
+  const db = new DatabaseSync(':memory:')
+  databases.push(db)
+  return createApp(db)
+}
+
+afterEach(() => {
+  for (const db of databases.splice(0)) db.close()
+})
+
+test('SQLite conserva proyectos, casos y ejecuciones al cerrar y reabrir la base', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'qa-forge-'))
+  const path = join(directory, 'persistence.sqlite')
+  let db = new DatabaseSync(path)
+  try {
+    const app = createApp(db)
+    assert.equal(db.prepare('PRAGMA foreign_keys').get()?.foreign_keys, 1)
+    const { project } = await (await createProject(app, { name: 'Persistente', description: '' })).json()
+    const { project: secondProject } = await (await createProject(app, { name: 'Segundo' })).json()
+    const cases = []
+    for (let i = 0; i < 2; i++) {
+      cases.push((await (await createTestCase(app, project.id, validTestCase)).json()).testCase)
+    }
+    const executions = []
+    for (const notes of [undefined, '', 'Observacion']) {
+      executions.push((await (await createExecution(app, cases[0].id, {
+        status: 'PASS', ...(notes === undefined ? {} : { notes })
+      })).json()).execution)
+    }
+    assert.throws(() => db.prepare(`INSERT INTO test_cases
+      (id, project_id, title, steps, expected_result) VALUES (?, ?, ?, ?, ?)`)
+      .run('orphan-case', 'missing', 'Titulo', '[]', 'Resultado'), /FOREIGN KEY/)
+    assert.throws(() => db.prepare(`INSERT INTO test_executions
+      (id, test_case_id, status, executed_at) VALUES (?, ?, ?, ?)`)
+      .run('orphan-execution', 'missing', 'PASS', new Date().toISOString()), /FOREIGN KEY/)
+    db.close()
+    db = new DatabaseSync(path)
+    const reopened = createApp(db)
+    assert.equal(db.prepare('PRAGMA foreign_keys').get()?.foreign_keys, 1)
+    assert.deepEqual(await (await reopened.request('/api/projects')).json(), {
+      projects: [project, secondProject]
+    })
+    assert.deepEqual(await (await reopened.request(`/api/projects/${project.id}/test-cases`)).json(), {
+      testCases: cases
+    })
+    assert.deepEqual(await (await reopened.request(executionPath(cases[0].id))).json(), { executions })
+    const { project: thirdProject } = await (await createProject(reopened, { name: 'Tercero' })).json()
+    assert.deepEqual(await (await reopened.request('/api/projects')).json(), {
+      projects: [project, secondProject, thirdProject]
+    })
+  } finally {
+    if (db.isOpen) db.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
 
 function executionPath(testCaseId: string) {
   return `/api/test-cases/${testCaseId}/executions`
@@ -18,7 +80,7 @@ async function setupExecutionCase(app: ReturnType<typeof createApp>) {
 }
 
 test('Las ejecuciones aceptan los tres estados y conservan el historial con IDs y fechas del servidor', async () => {
-  const app = createApp()
+  const app = createTestApp()
   const testCase = await setupExecutionCase(app)
   const empty = await app.request(executionPath(testCase.id))
   assert.equal(empty.status, 200)
@@ -50,7 +112,7 @@ test('Las ejecuciones aceptan los tres estados y conservan el historial con IDs 
 })
 
 test('Las ejecuciones rechazan cuerpos, estados, notas y JSON inválidos sin alterar el historial', async () => {
-  const app = createApp()
+  const app = createTestApp()
   const testCase = await setupExecutionCase(app)
   const { execution } = await (await createExecution(app, testCase.id, { status: 'PASS' })).json()
   const invalid: unknown[] = [null, [], 'texto', 42, true, {}, { notes: 'sin estado' }]
@@ -74,7 +136,7 @@ test('Las ejecuciones rechazan cuerpos, estados, notas y JSON inválidos sin alt
 })
 
 test('GET y POST executions devuelven 404 para casos inexistentes', async () => {
-  const app = createApp()
+  const app = createTestApp()
   for (const response of [
     await app.request(executionPath('inexistente')),
     await createExecution(app, 'inexistente', { status: 'PASS' })
@@ -85,13 +147,13 @@ test('GET y POST executions devuelven 404 para casos inexistentes', async () => 
 })
 
 test('Los historiales quedan aislados entre casos e instancias de createApp', async () => {
-  const firstApp = createApp()
+  const firstApp = createTestApp()
   const first = await setupExecutionCase(firstApp)
   const second = (await (await createTestCase(firstApp, first.projectId, validTestCase)).json()).testCase
   const { execution: firstExecution } = await (await createExecution(firstApp, first.id, { status: 'PASS' })).json()
   assert.deepEqual(await (await firstApp.request(executionPath(second.id))).json(), { executions: [] })
   const { execution: secondExecution } = await (await createExecution(firstApp, second.id, { status: 'FAIL' })).json()
-  const secondApp = createApp()
+  const secondApp = createTestApp()
   assert.equal((await secondApp.request(executionPath(first.id))).status, 404)
   assert.equal((await createExecution(secondApp, first.id, { status: 'PASS' })).status, 404)
   const third = await setupExecutionCase(secondApp)
@@ -104,7 +166,7 @@ test('Los historiales quedan aislados entre casos e instancias de createApp', as
 })
 
 test('GET /api/projects devuelve una lista de proyectos', async () => {
-  const app = createApp()
+  const app = createTestApp()
   const response = await app.request('/api/projects')
   const body = await response.json()
 
@@ -113,7 +175,7 @@ test('GET /api/projects devuelve una lista de proyectos', async () => {
 })
 
 test('Una ruta inexistente devuelve 404', async () => {
-  const app = createApp()
+  const app = createTestApp()
   const response = await app.request('/api/usuarios')
 
   assert.equal(response.status, 404)
@@ -134,7 +196,7 @@ function createTestCase(app: ReturnType<typeof createApp>, projectId: string, bo
 }
 
 test('POST test-cases crea casos asociados al proyecto con UUIDs únicos', async () => {
-  const app = createApp()
+  const app = createTestApp()
   const { project } = await (await createProject(app, { name: 'Proyecto' })).json()
   const response = await createTestCase(app, project.id, {
     ...validTestCase, id: 'id-del-cliente', projectId: 'otro-proyecto'
@@ -158,7 +220,7 @@ test('POST test-cases crea casos asociados al proyecto con UUIDs únicos', async
 })
 
 test('GET test-cases devuelve listas vacías y aísla los casos entre proyectos', async () => {
-  const app = createApp()
+  const app = createTestApp()
   const first = (await (await createProject(app, { name: 'Primero' })).json()).project
   const second = (await (await createProject(app, { name: 'Segundo' })).json()).project
   const path = (id: string) => `/api/projects/${id}/test-cases`
@@ -170,7 +232,7 @@ test('GET test-cases devuelve listas vacías y aísla los casos entre proyectos'
 })
 
 test('POST test-cases rechaza campos inválidos sin guardar datos', async () => {
-  const app = createApp()
+  const app = createTestApp()
   const { project } = await (await createProject(app, { name: 'Proyecto' })).json()
   const cases: unknown[] = [null, [], 'texto', 42, true, {}]
   for (const field of ['title', 'steps', 'expectedResult']) {
@@ -199,7 +261,7 @@ test('POST test-cases rechaza campos inválidos sin guardar datos', async () => 
 })
 
 test('GET y POST test-cases devuelven 404 para un proyecto inexistente', async () => {
-  const app = createApp()
+  const app = createTestApp()
   const responses = [
     await app.request('/api/projects/inexistente/test-cases'),
     await createTestCase(app, 'inexistente', validTestCase)
@@ -211,8 +273,8 @@ test('GET y POST test-cases devuelven 404 para un proyecto inexistente', async (
 })
 
 test('Los proyectos y casos de prueba quedan aislados entre instancias de createApp', async () => {
-  const firstApp = createApp()
-  const secondApp = createApp()
+  const firstApp = createTestApp()
+  const secondApp = createTestApp()
   const first = (await (await createProject(firstApp, { name: 'Primero' })).json()).project
   const firstCase = (await (await createTestCase(firstApp, first.id, validTestCase)).json()).testCase
   assert.deepEqual(await (await secondApp.request('/api/projects')).json(), { projects: [] })
@@ -227,7 +289,7 @@ test('Los proyectos y casos de prueba quedan aislados entre instancias de create
 })
 
 test('GET / conserva la bienvenida', async () => {
-  const response = await createApp().request('/')
+  const response = await createTestApp().request('/')
   assert.equal(response.status, 200)
   assert.deepEqual(await response.json(), {
     message: 'Bienvenido a QA Forge', status: 'ok'
@@ -243,7 +305,7 @@ function createProject(app: ReturnType<typeof createApp>, body: unknown) {
 }
 
 test('POST /api/projects crea proyectos con IDs únicos y descripción opcional', async () => {
-  const app = createApp()
+  const app = createTestApp()
   const response = await createProject(app, { name: '  QA Forge  ', description: 'Pruebas de API' })
   assert.equal(response.status, 201)
   const { project } = await response.json()
@@ -260,18 +322,18 @@ test('POST /api/projects crea proyectos con IDs únicos y descripción opcional'
 })
 
 test('GET /api/projects lista los proyectos creados en esa aplicación', async () => {
-  const app = createApp()
+  const app = createTestApp()
   const first = (await (await createProject(app, { name: 'Primero' })).json()).project
   const second = (await (await createProject(app, { name: 'Segundo', description: '' })).json()).project
   const response = await app.request('/api/projects')
   assert.equal(response.status, 200)
   assert.deepEqual(await response.json(), { projects: [first, second] })
-  const isolatedResponse = await createApp().request('/api/projects')
+  const isolatedResponse = await createTestApp().request('/api/projects')
   assert.deepEqual(await isolatedResponse.json(), { projects: [] })
 })
 
 test('POST /api/projects rechaza datos inválidos sin guardar proyectos', async () => {
-  const app = createApp()
+  const app = createTestApp()
   const cases = [
     {}, { name: '' }, { name: '  \n ' }, { name: 42 }, { name: null },
     { name: true }, null, [], 'texto', 42,
