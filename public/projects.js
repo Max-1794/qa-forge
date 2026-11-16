@@ -22,7 +22,11 @@ function renderProjects() {
     title.textContent = project.name
     const description = document.createElement('p')
     description.textContent = project.description || 'Sin descripción'
-    item.append(title, description)
+    const link = document.createElement('a')
+    link.setAttribute('href', `/projects/${encodeURIComponent(project.id)}/test-cases`)
+    link.textContent = 'Ver casos de prueba'
+    link.setAttribute('aria-label', `Ver casos de prueba de ${project.name}`)
+    item.append(title, description, link)
     return item
   })
   list.replaceChildren(...cards)

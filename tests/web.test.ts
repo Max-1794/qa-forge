@@ -3,6 +3,25 @@ import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
 import { createApp } from '../src/app'
 
+test('La pantalla de casos sirve HTML estático accesible y su asset explícito', async () => {
+  const db = new DatabaseSync(':memory:')
+  const original = process.cwd()
+  try {
+    const app = createApp(db)
+    const response = await app.request('/projects/example/test-cases')
+    assert.equal(response.status, 200)
+    assert.match(response.headers.get('content-type')!, /text\/html/)
+    const html = await response.text()
+    for (const fragment of ['<html lang="es">', 'href="/projects"', 'id="case-form"', 'id="steps"', 'aria-live="polite"', '/assets/test-cases.js']) assert.ok(html.includes(fragment), fragment)
+    process.chdir('tests')
+    const asset = await app.request('/assets/test-cases.js')
+    assert.equal(asset.status, 200)
+    assert.match(asset.headers.get('content-type')!, /text\/javascript/)
+    assert.equal(asset.headers.get('x-content-type-options'), 'nosniff')
+    for (const path of ['/projects/example/test-cases/unknown', '/assets/test-cases-page.ts', '/public/test-cases.js']) assert.equal((await app.request(path)).status, 404)
+  } finally { process.chdir(original); db.close() }
+})
+
 test('La página de proyectos sirve HTML español y referencia los assets permitidos', async () => {
   const db = new DatabaseSync(':memory:')
   try {

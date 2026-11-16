@@ -35,7 +35,7 @@ function setup(fetch: (url: string, options?: { method: string; body: string }) 
     return elements.get(selector)!
   }
   runInNewContext(source, {
-    document: { querySelector: get, createElement: () => new Element() }, fetch
+    document: { querySelector: get, createElement: () => new Element() }, fetch, encodeURIComponent
   })
   return { get, submit: () => get('#project-form').listeners.submit({ preventDefault() {} }) }
 }
@@ -53,6 +53,14 @@ test('El cliente representa texto de usuarios como texto y permite reintentar el
   const title = ui.get('#project-list').children[0].children[0]
   assert.equal(title.textContent, '<script>alert(1)</script>')
   assert.equal(title.children.length, 0)
+})
+
+test('Las tarjetas ofrecen enlaces accesibles con identificadores codificados', async () => {
+  const ui = setup(async () => ({ ok: true, json: async () => ({ projects: [{ id: 'a/b?c', name: 'Portal' }] }) }))
+  await flush()
+  const link = ui.get('#project-list').children[0].children[2]
+  assert.equal(link.attributes.href, '/projects/a%2Fb%3Fc/test-cases')
+  assert.equal(link.attributes['aria-label'], 'Ver casos de prueba de Portal')
 })
 
 test('El cliente rechaza nombres vacíos, evita doble envío y conserva datos ante resultado incierto', async () => {
