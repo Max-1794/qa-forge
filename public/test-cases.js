@@ -51,7 +51,14 @@ function renderCases() {
     heading.textContent = 'Resultado esperado'
     const expected = document.createElement('p')
     expected.textContent = testCase.expectedResult
-    card.append(title, ordered, heading, expected)
+    const execute = document.createElement('button')
+    execute.type = 'button'
+    execute.className = 'secondary execution-open'
+    execute.textContent = 'Ejecutar / ver historial'
+    execute.setAttribute('aria-label', `Ejecutar o ver historial de ${testCase.title}`)
+    execute.disabled = executionSaving
+    execute.addEventListener('click', () => openExecution(testCase.id))
+    card.append(title, ordered, heading, expected, execute)
     return card
   }))
   select('case-count').textContent = String(cases.length)
@@ -104,6 +111,8 @@ function addStep(focus = true) {
 function missingProject() {
   ready = false
   requestVersion++
+  historyVersion++
+  select('execution-panel').hidden = true
   select('case-content').hidden = true
   projectRetry.hidden = true
   message(projectStatus, 'El proyecto no existe.', 'error')
@@ -225,6 +234,198 @@ form.addEventListener('submit', async event => {
   }
   // This function handles its own errors without changing creation confirmation.
   if (confirmed) await loadCases()
+})
+
+const executionForm = select('execution-form')
+const executionFields = select('execution-fields')
+const executionNotes = select('execution-notes')
+const executionStatus = select('execution-status')
+const historyStatus = select('history-status')
+const historyList = select('execution-history')
+const historyRefresh = select('history-refresh')
+const executionRadios = ['pass', 'fail', 'blocked'].map(value => select(`execution-${value}`))
+let selectedCaseId = null
+let executionSaving = false
+let executionMissing = false
+let historyVersion = 0
+let executions = []
+// Confirmed results survive a subsequent GET that has not observed them yet.
+let confirmedExecutions = []
+
+function selectedStatus() {
+  return executionRadios.find(input => input.checked)?.value
+}
+
+function mayDiscardExecution() {
+  if (executionSaving) return false
+  return !(selectedStatus() || executionNotes.value !== '') ||
+    window.confirm('Hay un resultado o notas sin guardar. ¿Descartar el borrador?')
+}
+
+function executionEndpoint(id) {
+  return `/api/test-cases/${encodeURIComponent(id)}/executions`
+}
+
+function validExecution(value, id) {
+  return value && typeof value.id === 'string' && value.id !== '' && value.testCaseId === id &&
+    ['PASS', 'FAIL', 'BLOCKED'].includes(value.status) &&
+    typeof value.executedAt === 'string' && Number.isFinite(Date.parse(value.executedAt)) &&
+    (!('notes' in value) || typeof value.notes === 'string')
+}
+
+function renderHistory() {
+  historyList.replaceChildren(...[...executions].reverse().map(execution => {
+    const item = document.createElement('li')
+    const status = document.createElement('strong')
+    status.textContent = execution.status
+    const time = document.createElement('time')
+    time.setAttribute('datetime', execution.executedAt)
+    time.textContent = new Intl.DateTimeFormat('es', {
+      dateStyle: 'medium', timeStyle: 'long'
+    }).format(new Date(execution.executedAt))
+    item.append(status, time)
+    if ('notes' in execution) {
+      const notes = document.createElement('p')
+      notes.textContent = execution.notes
+      item.append(notes)
+    }
+    return item
+  }))
+}
+
+function missingExecutionCase() {
+  executionMissing = true
+  executionFields.disabled = true
+  message(executionStatus, 'El caso de prueba no existe. Actualizá la lista de casos.', 'error')
+}
+
+async function loadHistory() {
+  if (!selectedCaseId || executionSaving || !ready) return
+  const id = selectedCaseId
+  const version = ++historyVersion
+  historyRefresh.disabled = true
+  historyList.setAttribute('aria-busy', 'true')
+  message(historyStatus, 'Cargando historial…')
+  try {
+    const response = await fetch(executionEndpoint(id))
+    if (version !== historyVersion || id !== selectedCaseId) return
+    if (response.status === 404) { missingExecutionCase(); message(historyStatus, 'El caso de prueba no existe.', 'error'); return }
+    if (response.status !== 200) throw new Error('Carga fallida')
+    const body = await response.json()
+    if (version !== historyVersion || id !== selectedCaseId) return
+    if (!Array.isArray(body.executions) || !body.executions.every(value => validExecution(value, id)) ||
+        new Set(body.executions.map(value => value.id)).size !== body.executions.length) throw new Error('Respuesta inválida')
+    const ids = new Set(body.executions.map(value => value.id))
+    confirmedExecutions = confirmedExecutions.filter(value => !ids.has(value.id))
+    executions = [...body.executions, ...confirmedExecutions]
+    renderHistory()
+    message(historyStatus, executions.length ? 'Más recientes primero. Fechas en la zona horaria del navegador.' : 'Todavía no hay ejecuciones.')
+  } catch {
+    if (version !== historyVersion || id !== selectedCaseId) return
+    message(historyStatus, 'No se pudo actualizar el historial. Los resultados visibles pueden estar desactualizados. Reintentá con Actualizar historial.', 'error')
+  } finally {
+    if (version === historyVersion && id === selectedCaseId) {
+      historyRefresh.disabled = false
+      historyList.setAttribute('aria-busy', 'false')
+    }
+  }
+}
+
+function openExecution(id) {
+  if (!ready || executionSaving) return
+  const testCase = cases.find(value => value.id === id)
+  if (!testCase) return
+  if (selectedCaseId === id) { select('execution-title').focus(); return }
+  if (!mayDiscardExecution()) return
+  historyVersion++
+  selectedCaseId = id
+  executionMissing = false
+  executionFields.disabled = false
+  executions = []
+  confirmedExecutions = []
+  executionRadios.forEach(input => { input.checked = false })
+  executionNotes.value = ''
+  message(executionStatus, '')
+  select('execution-title').textContent = `Ejecución: ${testCase.title}`
+  select('execution-steps').replaceChildren(...testCase.steps.map(step => {
+    const item = document.createElement('li')
+    item.textContent = step
+    return item
+  }))
+  select('execution-expected').textContent = testCase.expectedResult
+  renderHistory()
+  select('execution-panel').hidden = false
+  select('execution-title').focus()
+  return loadHistory()
+}
+
+select('execution-close').addEventListener('click', () => {
+  if (!mayDiscardExecution()) return
+  const index = cases.findIndex(value => value.id === selectedCaseId)
+  historyVersion++
+  selectedCaseId = null
+  executionNotes.value = ''
+  executionRadios.forEach(input => { input.checked = false })
+  select('execution-panel').hidden = true
+  const origin = list.children[index]?.children[4]
+  if (origin) origin.focus()
+  else refresh.focus()
+})
+historyRefresh.addEventListener('click', loadHistory)
+executionForm.addEventListener('submit', async event => {
+  event.preventDefault()
+  if (!ready || !selectedCaseId || executionSaving || executionMissing) return
+  const status = selectedStatus()
+  if (!['PASS', 'FAIL', 'BLOCKED'].includes(status)) {
+    message(executionStatus, 'Seleccioná PASS, FAIL o BLOCKED antes de registrar.', 'error')
+    executionRadios[0].focus()
+    return
+  }
+  const id = selectedCaseId
+  const payload = { status, ...(executionNotes.value === '' ? {} : { notes: executionNotes.value }) }
+  executionSaving = true
+  executionFields.disabled = true
+  select('execution-close').disabled = true
+  for (const card of list.children) card.children[4].disabled = true
+  historyRefresh.disabled = true
+  historyVersion++
+  historyList.setAttribute('aria-busy', 'false')
+  message(historyStatus, 'Consultá el historial después del envío para ver los resultados guardados.')
+  executionForm.setAttribute('aria-busy', 'true')
+  message(executionStatus, 'Guardando resultado…')
+  let confirmed = false
+  try {
+    const response = await fetch(executionEndpoint(id), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+    })
+    if (response.status === 404) { missingExecutionCase(); return }
+    if (response.status === 400) {
+      const body = await response.json()
+      message(executionStatus, typeof body.error === 'string' ? body.error : 'Revisá el resultado y las notas.', 'error')
+      return
+    }
+    if (response.status !== 201) throw new Error('Resultado incierto')
+    const body = await response.json()
+    if (!validExecution(body.execution, id) || body.execution.status !== status ||
+        body.execution.notes !== payload.notes) throw new Error('Respuesta inválida')
+    confirmed = true
+    confirmedExecutions.push(body.execution)
+    executions = [...executions.filter(value => value.id !== body.execution.id), body.execution]
+    renderHistory()
+    executionNotes.value = ''
+    executionRadios.forEach(input => { input.checked = false })
+    message(executionStatus, 'Resultado registrado correctamente.', 'success')
+  } catch {
+    message(executionStatus, 'No pudimos confirmar el registro. Conservamos tus datos. Consultá el historial antes de volver a enviar para evitar duplicados.', 'error')
+  } finally {
+    executionSaving = false
+    executionFields.disabled = executionMissing
+    select('execution-close').disabled = false
+    for (const card of list.children) card.children[4].disabled = false
+    historyRefresh.disabled = false
+    executionForm.removeAttribute('aria-busy')
+  }
+  if (confirmed) await loadHistory()
 })
 
 select('add-step').addEventListener('click', () => addStep())

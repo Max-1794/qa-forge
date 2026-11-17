@@ -42,7 +42,30 @@ export const testCasesPage = `<!doctype html>
         <ul id="case-list" class="project-list" aria-label="Casos de prueba" aria-busy="false"></ul>
       </section>
     </div>
-    <noscript><p>Activá JavaScript para listar y crear casos de prueba.</p></noscript>
+    <section id="execution-panel" class="panel execution-panel" aria-labelledby="execution-title" hidden>
+      <div class="section-heading"><h2 id="execution-title" tabindex="-1">Ejecución</h2><button id="execution-close" type="button" class="secondary">Cerrar</button></div>
+      <p>Realizá los pasos manualmente y registrá el resultado.</p>
+      <ol id="execution-steps"></ol>
+      <h3>Resultado esperado</h3><p id="execution-expected"></p>
+      <form id="execution-form">
+        <fieldset id="execution-fields">
+          <legend>Resultado (obligatorio)</legend>
+          <div class="execution-options">
+            <label for="execution-pass"><input id="execution-pass" type="radio" name="execution-status" value="PASS" required> PASS — Aprobado</label>
+            <label for="execution-fail"><input id="execution-fail" type="radio" name="execution-status" value="FAIL" required> FAIL — Fallido</label>
+            <label for="execution-blocked"><input id="execution-blocked" type="radio" name="execution-status" value="BLOCKED" required> BLOCKED — Bloqueado</label>
+          </div>
+          <label for="execution-notes">Notas (opcional)</label>
+          <textarea id="execution-notes" rows="3"></textarea>
+          <button type="submit">Registrar resultado</button>
+        </fieldset>
+        <p id="execution-status" role="status" aria-live="polite" aria-atomic="true"></p>
+      </form>
+      <div class="section-heading"><h3>Historial de ejecuciones</h3><button id="history-refresh" type="button" class="secondary">Actualizar historial</button></div>
+      <p id="history-status" role="status" aria-live="polite" aria-atomic="true"></p>
+      <ol id="execution-history" aria-label="Ejecuciones más recientes primero" aria-busy="false"></ol>
+    </section>
+    <noscript><p>Activá JavaScript para gestionar casos de prueba y sus ejecuciones.</p></noscript>
     <footer>QA Forge / La calidad se construye, caso a caso.</footer>
   </main>
 </body>

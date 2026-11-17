@@ -56,4 +56,13 @@ fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .project-card h4 { margin-bottom: 8px; }
 .section-heading { flex-wrap: wrap; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.execution-panel { margin-top: 32px; overflow-wrap: anywhere; }
+.execution-options { display: flex; flex-wrap: wrap; gap: 12px 24px; }
+.execution-options label { display: flex; align-items: center; gap: 8px; }
+.execution-options input { width: auto; }
+.execution-panel p, #execution-steps li { white-space: pre-wrap; }
+.execution-panel form button, .execution-open { margin-top: 16px; }
+#execution-history { padding-left: 24px; }
+#execution-history li { padding: 16px 0; border-bottom: 1px solid var(--border); }
+#execution-history time { display: block; margin-top: 8px; }
 @media (max-width: 760px) { .layout { grid-template-columns: 1fr; gap: 32px; } main { padding-top: 32px; } .workspace { font-size: 12px; } .panel { padding: 22px; } }

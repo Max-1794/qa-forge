@@ -123,6 +123,81 @@ adicionales. Cubren navegación, assets, pasos, validación, XSS, errores, doble
 envío y GET atrasados. No sustituyen la revisión visual y de accesibilidad real.
 Además de los comandos habituales, ejecutar `node --check public/test-cases.js`.
 
+## Ejecución visual de casos (etapa 6C)
+
+En la pantalla de casos, «Ejecutar / ver historial» abre un panel compartido debajo
+del listado. Muestra el caso, sus pasos y el resultado esperado. Los pasos se
+realizan manualmente: el panel registra el resultado, no automatiza el navegador.
+No agrega rutas web, dependencias, contratos ni cambios al esquema SQLite.
+
+Es obligatorio seleccionar explícitamente PASS, FAIL o BLOCKED; no hay resultado
+por defecto. Las notas son opcionales: se envían literalmente, incluidos espacios
+y saltos de línea. Un campo vacío se omite del POST. La API genera ID y fecha;
+el formulario no permite editarlos. Se reutiliza exclusivamente
+`GET/POST /api/test-cases/:testCaseId/executions`.
+
+El historial se carga al abrir el panel, manualmente con «Actualizar historial» y
+después de un registro confirmado. Se muestra invirtiendo el orden de creación
+recibido, con las ejecuciones más recientes primero, sin cambiar SQLite ni ordenar
+por fechas. Las fechas se presentan en la zona horaria del navegador. No se hacen
+solicitudes de historial por cada tarjeta. La API devuelve el historial completo,
+sin paginación ni actualizaciones en tiempo real.
+
+Cerrar o cambiar de caso pide confirmación mediante el diálogo nativo cuando hay
+notas (incluso espacios) o un resultado sin guardar. Cancelar conserva el borrador.
+Actualizar o crear casos no reconstruye el panel. Durante el POST se bloquean los
+campos, el doble envío, el cierre y el cambio de caso. La protección del borrador
+se aplica al cierre del panel y al cambio de caso; recargar o abandonar la página
+no conserva el borrador.
+
+Un 400 conserva el formulario y muestra el error como texto. Un 404 de ejecuciones
+bloquea el registro de ese caso y pide actualizar los casos; no se interpreta como
+proyecto inexistente. Ante red, 5xx o respuesta inválida, se conserva el formulario
+y se indica consultar el historial antes de reenviar. Nunca se reintenta un POST
+automáticamente. Sin idempotencia no puede garantizarse ausencia de duplicados
+si se pierde una respuesta.
+
+Los GET atrasados, incluso durante el parseo JSON, se descartan al cambiar de caso,
+cerrar o enviar. Las ejecuciones confirmadas se conservan hasta que el GET las
+incluya; si falla la actualización, siguen visibles junto con el mensaje de éxito.
+Los errores de carga tienen un estado independiente y permiten actualizar sin
+borrar el historial visible. Títulos, pasos, notas y errores usan `textContent`.
+
+El panel usa radios nativos con etiquetas y leyenda, regiones de estado, foco en
+el encabezado al abrir y regreso al botón de origen al cerrar. Los estados se
+identifican con texto además del estilo. La aplicación sigue sin autenticación
+ni autorización: la selección desde un proyecto no constituye control de acceso
+en el servidor. No es una solución de aislamiento multiusuario.
+
+### Verificación manual de ejecuciones
+
+1. Iniciar con `npm.cmd run dev`, abrir `/projects`, elegir un proyecto y abrir
+   «Ejecutar / ver historial» en uno de sus casos. Verificar pasos, resultado
+   esperado y estado vacío del historial en un caso sin ejecuciones.
+2. Intentar registrar sin selección. Registrar PASS, FAIL y BLOCKED, con notas
+   vacías y con espacios, saltos de línea y `<script>alert(1)</script>`: las notas
+   deben verse literalmente. Comprobar orden reciente primero y persistencia
+   después de recargar y reiniciar el servidor.
+3. Con notas o selección sin guardar, intentar cerrar y cambiar de caso. Cancelar
+   debe conservar todo; aceptar debe descartar. Actualizar los casos o crear otro
+   caso debe conservar el panel y su borrador.
+4. Con red lenta, enviar dos veces e intentar cerrar o cambiar de caso: sólo debe
+   salir un POST y los controles deben estar bloqueados durante el envío.
+5. Simular desconexión o respuesta fallida: conservar el formulario y consultar
+   el historial antes de reenviar. Si falla sólo el GET posterior al POST, el
+   resultado confirmado y el mensaje de éxito deben seguir visibles.
+6. Cambiar rápidamente entre casos con cargas pendientes: los resultados deben
+   pertenecer siempre al caso seleccionado. Actualizar el historial en otra
+   pestaña y comprobar que se obtiene al solicitarlo manualmente.
+7. Revisar teclado, radios con flechas, confirmación nativa, foco al abrir/cerrar,
+   lector de pantalla, zoom y anchos de 375 y 1280 píxeles, con textos largos y
+   multilínea. No debe haber desbordamiento horizontal.
+
+Los tests de cliente cubren selección, notas, orden, descarte, concurrencia,
+errores y respuestas atrasadas mediante el DOM simulado existente. Los tests web
+verifican el marcado inicial sin selección por defecto. No sustituyen la revisión
+visual ni las pruebas reales con teclado y lector de pantalla.
+
 ## Capas del servidor
 
 - `src/index.ts` elige la ruta, abre la conexion y la cierra al detener el servidor.
